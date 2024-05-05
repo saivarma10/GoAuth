@@ -8,13 +8,36 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"time"
 	"strings"
+	"database/sql"
+    _ "github.com/go-sql-driver/mysql"
+
 )
+var db *sql.DB
+
+
+func initDB() (*sql.DB,error){
+	db, err := sql.Open("mysql", "root:root@tcp(127.0.0.1:3306)/test")
+    if err != nil {
+        panic(err.Error())
+    }
+	err = db.Ping()
+    if err != nil {
+        return nil, err
+    }
+	// _, err = db.Exec("CREATE TABLE IF NOT EXISTS userData (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, email TEXT NOT NULL, password TEXT NOT NULL,phone BIGINT, city TEXT NOT NULL,userType TEXT NOT NULL"){
+	// 	return db,err
+    // }
+    return db,nil
+}
 var jwtKey = []byte("jwtsecretkey")
 
 type user struct{
 	Email string `json:"email"`
 	Password string `json:"password"`
 
+}
+type userTable struct {
+    id int `json:"id"`
 }
 
 
@@ -84,6 +107,7 @@ func login(c *gin.Context){
 		return
 	}
 	pass,ok:=data[newuser.Email]
+	
 	if(ok){
 	err := bcrypt.CompareHashAndPassword([]byte(pass), []byte(newuser.Password))
     fmt.Println(err)
@@ -97,7 +121,7 @@ func login(c *gin.Context){
 	}
 }
 
-func signup(c *gin.Context){
+func signup(c *gin.Context,db *sql.DB){
 	var newuser signInUser 
 	if err:=c.BindJSON(&newuser);err!=nil{
 		return
@@ -106,6 +130,7 @@ func signup(c *gin.Context){
     if err != nil {
         panic(err)
     }
+	newuser.Password=string(hashedPassword)
 
 	data[newuser.Email]=string(hashedPassword)
 	newMeta:=metaData{
@@ -115,6 +140,10 @@ func signup(c *gin.Context){
 		UserType:newuser.UserType,
 	}
 	meta=append(meta,newMeta)
+	err=insertValues(db,newuser)
+	if(err!=nil){
+		c.IndentedJSON(http.StatusBadRequest,"bad")
+	}
 	fmt.Println("append")
 	fmt.Println(meta)
 	c.IndentedJSON(http.StatusOK,newuser)
@@ -190,10 +219,86 @@ func getDatafromDB(mail string) (metaData,error){
 return metanew,nil
 }
 
+func createTable(db *sql.DB) error{
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS userData (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, email TEXT NOT NULL, password TEXT NOT NULL,phone BIGINT NOT NULL, city TEXT NOT NULL,userType TEXT NOT NULL)")
+    if err != nil {
+        // panic(err)
+		return err
+    }
+	return nil
+
+}
+func insertValues(db *sql.DB,user signInUser) error{
+
+	stmt, err := db.Prepare("INSERT INTO userData (email,password,phone,city,userType) VALUES (?,?,?,?,?)")
+	if err != nil {
+		panic(err.Error())
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(user.Email,user.Password,user.Phone,user.City,user.UserType)
+	if err != nil {
+		panic(err.Error())
+	}
+	return nil
+
+}
+func fetchValuesFromDB(db *sql.DB) ([]user ,error){
+	results, err := db.Query("SELECT email,password FROM userData")
+	var testtable2 []user
+    if err !=nil {
+        panic(err.Error())
+    }
+    for results.Next() {
+		var u user
+        err = results.Scan(&u.Email,&u.Password)
+        if err !=nil {
+            panic(err.Error())
+        }
+		testtable2=append(testtable2,u)
+        // fmt.Println(testtable2.Email)
+		// fmt.Println(testtable2.Password)
+    }
+	return testtable2,nil
+}
 
 func main(){
+
+	db, err := initDB()
+    if err != nil {
+        panic(err.Error())
+    }
+    defer db.Close()
+
+	err= createTable(db)
+	if err != nil {
+        panic(err.Error())
+    }
+
+	var userstruct signInUser
+	userstruct.Email="varmasai@gmail.com"
+	userstruct.Password="1234556"
+	userstruct.City="podagatlapalli"
+	userstruct.Phone=9989957122
+	userstruct.UserType="admin"
+	err=insertValues(db,userstruct)
+	if(err!=nil){
+		panic(err.Error())
+	}
+	
+    fmt.Println("Yay, values added!")
+	
+	var testtable2 []user
+	testtable2,err=fetchValuesFromDB(db)
+	for i:=range(testtable2){
+	fmt.Println(testtable2[i].Email)
+	fmt.Println(testtable2[i].Password)
+	}
+    fmt.Println("Success!")
+
 	router:=gin.Default();
-	router.POST("/signup",signup)
+	router.POST("/signup",func(c *gin.Context) {
+		signup(c, db)
+	})
 	router.POST("/login",login)
 	router.POST("/token",generateAuthToken)
 	auth:=router.Group("/")
