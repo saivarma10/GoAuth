@@ -13,7 +13,7 @@ import (
 
 )
 var db *sql.DB
-
+var Inmemory bool
 
 func initDB() (*sql.DB,error){
 	db, err := sql.Open("mysql", "root:root@tcp(127.0.0.1:3306)/test")
@@ -71,12 +71,22 @@ func generateAuthToken( c *gin.Context,db *sql.DB){
 	if err:=c.BindJSON(&newuser);err!=nil{
 		return
 	}
+	var pass string
+	var err error
+	if(!Inmemory){
 	val,err:=fetchValuesFromDBForAuth(db,newuser)
 	if err!=nil{
 		fmt.Println(err)
 	}
-	pass:=val.Password
-	// pass,ok:=data[newuser.Email]
+	pass=val.Password
+	}else{
+		var ok bool
+	pass,ok=data[newuser.Email]
+	if(!ok){
+		c.IndentedJSON(http.StatusOK,"Incorrect creds")
+		return
+		}
+	}
 	if(err!=nil){
 		c.IndentedJSON(http.StatusOK,"Incorrect creds")
 		return
@@ -109,13 +119,23 @@ func login(c *gin.Context,db *sql.DB){
 	if err:=c.BindJSON(&newuser);err!=nil{
 		return
 	}
-	// pass,ok:=data[newuser.Email]
+	pass:=""
+	if(Inmemory){
+		var ok bool
+	pass,ok=data[newuser.Email]
+	if(!ok){
+		c.IndentedJSON(http.StatusOK, gin.H{"error": "user not found"})
+		return
+	}
+	}else{
 	val,err:=fetchValuesFromDBForAuth(db,newuser)
 	if err!=nil{
 		fmt.Println(err)
 	}
-	pass:=val.Password
-	if(val.Password!=""){
+	pass=val.Password
+	}
+	
+	if(pass!=""){
 	err := bcrypt.CompareHashAndPassword([]byte(pass), []byte(newuser.Password))
     // fmt.Println(err)
 	if(err==nil) {
@@ -147,13 +167,17 @@ func signup(c *gin.Context,db *sql.DB){
 		City:newuser.City,
 		UserType:newuser.UserType,
 	}
+	if(Inmemory){
 	meta=append(meta,newMeta)
+	fmt.Println("append")
+	fmt.Println(meta)
+	}else{
 	err=insertValues(db,newuser)
 	if(err!=nil){
 		c.IndentedJSON(http.StatusBadRequest,"bad")
 	}
-	fmt.Println("append")
-	fmt.Println(meta)
+	}
+	
 	c.IndentedJSON(http.StatusOK,newuser)
 
 
@@ -204,18 +228,23 @@ func authorize(c *gin.Context) {
 
 func dashboard(c *gin.Context,db *sql.DB){
 	email := c.MustGet("email").(string)
+	var userdata metaData
 	if(email==""){
 		c.JSON(http.StatusOK, gin.H{"email": "invalid mail"})
 	}
-	// userdata,_:=getDatafromDB(email)
-	userdata,_:=fetchValuesFromDBForDash(db,email)
+	if(Inmemory){
+	userdata,_=getDatafromLocalcache(email)
+	}else{
+	userdata,_=fetchValuesFromDBForDash(db,email)
+	}
     c.JSON(http.StatusOK, gin.H{"email": userdata})
 
 }
 
-func getDatafromDB(mail string) (metaData,error){
+func getDatafromLocalcache(mail string) (metaData,error){
 	var metanew metaData
 	fmt.Println(meta)
+	fmt.Println(mail)
 	for i:=range(meta){
 		if meta[i].Email==mail{
 			fmt.Println(meta[i])
@@ -317,8 +346,11 @@ func fetchValuesFromDB(db *sql.DB) ([]user ,error){
 }
 
 func main(){
-
-	db, err := initDB()
+	Inmemory=false	
+	var err error
+	if(!Inmemory){
+	fmt.Println("database")
+	db, err = initDB()
     if err != nil {
         panic(err.Error())
     }
@@ -328,27 +360,9 @@ func main(){
 	if err != nil {
         panic(err.Error())
     }
-
-	var userstruct signInUser
-	userstruct.Email="varmasai@gmail.com"
-	userstruct.Password="1234556"
-	userstruct.City="podagatlapalli"
-	userstruct.Phone=9989957122
-	userstruct.UserType="admin"
-	err=insertValues(db,userstruct)
-	if(err!=nil){
-		panic(err.Error())
+	}else{
+		fmt.Println("In memory ")
 	}
-	
-    fmt.Println("Yay, values added!")
-	
-	var testtable2 []user
-	testtable2,err=fetchValuesFromDB(db)
-	for i:=range(testtable2){
-	fmt.Println(testtable2[i].Email)
-	fmt.Println(testtable2[i].Password)
-	}
-    fmt.Println("Success!")
 
 	router:=gin.Default();
 	router.POST("/signup",func(c *gin.Context) {
