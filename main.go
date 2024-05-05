@@ -24,9 +24,6 @@ func initDB() (*sql.DB,error){
     if err != nil {
         return nil, err
     }
-	// _, err = db.Exec("CREATE TABLE IF NOT EXISTS userData (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, email TEXT NOT NULL, password TEXT NOT NULL,phone BIGINT, city TEXT NOT NULL,userType TEXT NOT NULL"){
-	// 	return db,err
-    // }
     return db,nil
 }
 var jwtKey = []byte("jwtsecretkey")
@@ -68,15 +65,21 @@ type createUser struct{
 
 }
 
-func generateAuthToken( c *gin.Context){
+func generateAuthToken( c *gin.Context,db *sql.DB){
 
 	var newuser user
 	if err:=c.BindJSON(&newuser);err!=nil{
 		return
 	}
-	pass,ok:=data[newuser.Email]
-	if(!ok){
+	val,err:=fetchValuesFromDBForAuth(db,newuser)
+	if err!=nil{
+		fmt.Println(err)
+	}
+	pass:=val.Password
+	// pass,ok:=data[newuser.Email]
+	if(err!=nil){
 		c.IndentedJSON(http.StatusOK,"Incorrect creds")
+		return
 	}else{
 		err:=bcrypt.CompareHashAndPassword([]byte(pass),[]byte(newuser.Password))
 		if err!=nil{
@@ -101,17 +104,22 @@ func generateAuthToken( c *gin.Context){
 }
 
 
-func login(c *gin.Context){
+func login(c *gin.Context,db *sql.DB){
 	var newuser user
 	if err:=c.BindJSON(&newuser);err!=nil{
 		return
 	}
-	pass,ok:=data[newuser.Email]
-	
-	if(ok){
+	// pass,ok:=data[newuser.Email]
+	val,err:=fetchValuesFromDBForAuth(db,newuser)
+	if err!=nil{
+		fmt.Println(err)
+	}
+	pass:=val.Password
+	if(val.Password!=""){
 	err := bcrypt.CompareHashAndPassword([]byte(pass), []byte(newuser.Password))
-    fmt.Println(err)
+    // fmt.Println(err)
 	if(err==nil) {
+		fmt.Println("success login")
 	c.IndentedJSON(http.StatusOK,newuser)
 	}else{
 		c.IndentedJSON(http.StatusOK,"incorrect pass")
@@ -194,13 +202,13 @@ func authorize(c *gin.Context) {
 }
 
 
-func dashboard(c *gin.Context){
+func dashboard(c *gin.Context,db *sql.DB){
 	email := c.MustGet("email").(string)
 	if(email==""){
 		c.JSON(http.StatusOK, gin.H{"email": "invalid mail"})
 	}
-	userdata,_:=getDatafromDB(email)
-	
+	// userdata,_:=getDatafromDB(email)
+	userdata,_:=fetchValuesFromDBForDash(db,email)
     c.JSON(http.StatusOK, gin.H{"email": userdata})
 
 }
@@ -242,6 +250,53 @@ func insertValues(db *sql.DB,user signInUser) error{
 	return nil
 
 }
+
+func fetchValuesFromDBForAuth(db *sql.DB,User user) (user ,error){
+	
+	results, err := db.Query("SELECT email,password FROM userData where email=?",User.Email)
+	
+	// results, err := db.Query("SELECT email,password FROM userData")
+	var testtable2 user
+    if err !=nil {
+        panic(err.Error())
+    }
+    for results.Next() {
+		// var u user
+        err = results.Scan(&testtable2.Email,&testtable2.Password)
+        if err !=nil {
+            panic(err.Error())
+        }
+		// testtable2=append(testtable2,u)
+        // fmt.Println(testtable2.Email)
+		// fmt.Println(testtable2.Password)
+    }
+	return testtable2,nil
+}
+
+
+func fetchValuesFromDBForDash(db *sql.DB,email string) (metaData ,error){
+	
+	results, err := db.Query("SELECT email,phone,city,userType FROM userData where email=?",email)
+	
+	// results, err := db.Query("SELECT email,password FROM userData")
+	var testtable2 metaData
+    if err !=nil {
+        panic(err.Error())
+    }
+    for results.Next() {
+		// var u user
+        err = results.Scan(&testtable2.Email,&testtable2.Phone,&testtable2.City,&testtable2.UserType)
+        if err !=nil {
+            panic(err.Error())
+        }
+		// testtable2=append(testtable2,u)
+        // fmt.Println(testtable2.Email)
+		// fmt.Println(testtable2.Password)
+    }
+	// testtable2.Password=""
+	return testtable2,nil
+}
+
 func fetchValuesFromDB(db *sql.DB) ([]user ,error){
 	results, err := db.Query("SELECT email,password FROM userData")
 	var testtable2 []user
@@ -299,12 +354,18 @@ func main(){
 	router.POST("/signup",func(c *gin.Context) {
 		signup(c, db)
 	})
-	router.POST("/login",login)
-	router.POST("/token",generateAuthToken)
+	router.POST("/login",func(c *gin.Context) {
+		login(c, db)
+	})
+	router.POST("/token",func(c *gin.Context) {
+		generateAuthToken(c, db)
+	})
 	auth:=router.Group("/")
 	auth.Use(authorize)
 	{
-		auth.GET("/dashboard",dashboard)
+		auth.GET("/dashboard",func(c *gin.Context) {
+			dashboard(c, db)
+		})
 	}
 	router.Run("localhost:5000")
 }
